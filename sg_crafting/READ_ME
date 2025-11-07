@@ -1,0 +1,39 @@
+# sg_crafting (FiveM)
+
+Lightweight QBCore-compatible crafting resource scaffold.
+
+Features
+- QBCore server-side crafting logic (example recipes)
+- Client-side integration with qb-target (wb-target style) and ox_target
+- Simple qb-menu integration for recipe selection
+- Clear TODOs where to bridge Codem Inventory
+
+Installation
+1. Place the `sg_crafting` folder into your server `resources` directory.
+2. Add `ensure sg_crafting` to your `server.cfg`.
+3. Edit `config.lua` to update coords and recipes.
+
+Target systems
+- To use qb-target (wb-target) set `Config.UseQbTarget = true`.
+- To use ox_target set `Config.UseOxTarget = true`.
+You can enable both; the client will attempt to register targets for both if they exist.
+
+Codem Inventory bridging
+This resource uses QBCore's inventory functions by default. If you use `codem-inventory` or another inventory system, follow the TODO comments in `server.lua` and replace the `xPlayer.Functions.RemoveItem` / `xPlayer.Functions.AddItem` calls with your inventory's server functions. Keep the same server event `sg_crafting:tryCraft` as the integration point.
+
+Customization
+- Add or change recipes in `config.lua` under `Config.Recipes`.
+- Add/remove station coordinates in `Config.CraftingStations`.
+- Replace the client menu with an NUI menu if desired (client.lua: `openCraftingMenu`).
+
+Example: add to server.cfg
+ensure qb-core
+ensure qb-target -- if used
+ensure ox_target -- if used
+ensure sg_crafting
+
+Support
+This is a scaffold/example. If you want, I can:
+- add a simple NUI menu for crafting
+- implement a direct bridge for Codem Inventory once you provide its server API
+- add notifications and progress bar fallbacks
