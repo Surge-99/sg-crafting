@@ -1,3 +1,5 @@
+THIS IS NOT COMPLETED!!!!!!!
+
 # sg_crafting (FiveM)
 
 Lightweight QBCore-compatible crafting resource scaffold.
@@ -37,3 +39,4 @@ This is a scaffold/example. If you want, I can:
 - add a simple NUI menu for crafting
 - implement a direct bridge for Codem Inventory once you provide its server API
 - add notifications and progress bar fallbacks
+
