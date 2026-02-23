@@ -39,8 +39,8 @@ It explains setup, configuration, and where to edit integrations.
 3) Basic Setup
 -----------------------------------------------------------------------
 1. Put the resource in your server resources folder.
-2. Ensure dependencies are started (`qb-core`, `qb-menu`, `qb-input`,
-   and target/inventory resources you use).
+2. Ensure dependencies are started (`qb-core`, plus menu/input resources
+   for your setup, and target/inventory resources you use).
 3. Delete qb-crafting or any other crafting script used so no duplicates are encountered
 4. Configure `config/config.lua`.
 5. Configure recipes in `config/recipes_cfg.lua`.
@@ -57,7 +57,12 @@ It explains setup, configuration, and where to edit integrations.
   true = target interactions, false = marker + E.
 
 - `Config.Target.system`
-  `'qb_target'` or `'ox_target'`.
+  `'qb-target'` or `'ox_target'`.
+
+- `Config.Menu`
+  `'qb'` or `'ox'`.
+  - `'qb'` uses `qb-menu` + `qb-input`
+  - `'ox'` uses `ox_lib` context + input dialog
 
 - `Config.Inventory`
   `'qb'` or `'ox'`.

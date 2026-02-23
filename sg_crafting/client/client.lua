@@ -3,6 +3,7 @@ local CraftingBlips = {}
 local PlayerData = {}
 local UseTarget = Config.Target.enabled
 local SpawnedProps = {}
+local SpawningProps = {}
 local RecipeCache = nil
 
 local function DebugPrint(message)
@@ -30,6 +31,10 @@ end
 
 local function GetPlayerJob()
     if not PlayerData.job then
+        PlayerData = QBCore.Functions.GetPlayerData() or PlayerData
+    end
+
+    if not PlayerData.job then
         return nil, 0
     end
 
@@ -53,20 +58,19 @@ local function IsJobAllowed(locationData)
         return false
     end
 
-    if type(Config.BenchJobs) ~= 'table' or #Config.BenchJobs == 0 then
-        return false
-    end
-
-    local globalAllowed = false
-    for _, jobName in ipairs(Config.BenchJobs) do
-        if jobName == playerJob then
-            globalAllowed = true
-            break
+    -- Optional global allowlist: if configured, player job must be present.
+    if type(Config.BenchJobs) == 'table' and #Config.BenchJobs > 0 then
+        local globalAllowed = false
+        for _, jobName in ipairs(Config.BenchJobs) do
+            if jobName == playerJob then
+                globalAllowed = true
+                break
+            end
         end
-    end
 
-    if not globalAllowed then
-        return false
+        if not globalAllowed then
+            return false
+        end
     end
 
     local minGrade = locationData.jobs[playerJob]
@@ -179,6 +183,71 @@ local function EnsureModelLoaded(modelHash, timeoutMs)
     return true
 end
 
+local function EnsureAnimDictLoaded(dict, timeoutMs)
+    if not dict or dict == '' then
+        return false
+    end
+
+    if HasAnimDictLoaded(dict) then
+        return true
+    end
+
+    RequestAnimDict(dict)
+
+    local expiresAt = GetGameTimer() + (timeoutMs or 5000)
+    while not HasAnimDictLoaded(dict) do
+        if GetGameTimer() >= expiresAt then
+            return false
+        end
+        Wait(0)
+    end
+
+    return true
+end
+
+local function StartCraftingAnim()
+    local animConfig = Config.CraftingAnim
+    if type(animConfig) ~= 'table' or animConfig.enabled == false then
+        return false
+    end
+
+    if not EnsureAnimDictLoaded(animConfig.dict, 5000) then
+        DebugPrint(('Failed to load crafting anim dict "%s".'):format(tostring(animConfig.dict)))
+        return false
+    end
+
+    local ped = PlayerPedId()
+    TaskPlayAnim(
+        ped,
+        animConfig.dict,
+        animConfig.clip or 'fixing_a_ped',
+        animConfig.blendIn or 3.0,
+        animConfig.blendOut or 1.0,
+        -1,
+        animConfig.flags or 49,
+        animConfig.playbackRate or 1.0,
+        false,
+        false,
+        false
+    )
+
+    return true
+end
+
+local function StopCraftingAnim()
+    local animConfig = Config.CraftingAnim
+    if type(animConfig) ~= 'table' or animConfig.enabled == false then
+        return
+    end
+
+    local ped = PlayerPedId()
+    if animConfig.dict and animConfig.clip then
+        StopAnimTask(ped, animConfig.dict, animConfig.clip, 1.0)
+    else
+        ClearPedTasks(ped)
+    end
+end
+
 local function IsValidCoords3(coords)
     if not coords then
         return false
@@ -222,6 +291,10 @@ local function GetLocationCoords(locationKey, locationData)
 end
 
 local function SpawnLocationProp(locationKey, locationData)
+    while SpawningProps[locationKey] do
+        Wait(0)
+    end
+
     local existingEntity = SpawnedProps[locationKey]
     if existingEntity and DoesEntityExist(existingEntity) then
         return existingEntity
@@ -232,26 +305,32 @@ local function SpawnLocationProp(locationKey, locationData)
         return nil
     end
 
+    SpawningProps[locationKey] = true
+
     local model = propData.model
     if not model then
         DebugPrint(('Location "%s" has prop enabled but no model configured.'):format(locationKey))
+        SpawningProps[locationKey] = nil
         return nil
     end
 
     local modelHash = type(model) == 'number' and model or joaat(model)
     if not IsModelInCdimage(modelHash) then
         DebugPrint(('Location "%s" has invalid prop model: %s'):format(locationKey, tostring(model)))
+        SpawningProps[locationKey] = nil
         return nil
     end
 
     local coords4 = propData.coords or locationData.coords
     if not IsValidCoords4(coords4) then
         DebugPrint(('Location "%s" prop spawn requires vec4 coords (x, y, z, w).'):format(locationKey))
+        SpawningProps[locationKey] = nil
         return nil
     end
 
     if not EnsureModelLoaded(modelHash, propData.loadTimeoutMs or 5000) then
         DebugPrint(('Location "%s" failed to load prop model: %s'):format(locationKey, tostring(model)))
+        SpawningProps[locationKey] = nil
         return nil
     end
 
@@ -260,13 +339,87 @@ local function SpawnLocationProp(locationKey, locationData)
 
     if not DoesEntityExist(entity) then
         DebugPrint(('Location "%s" failed to create prop entity.'):format(locationKey))
+        SpawningProps[locationKey] = nil
         return nil
     end
 
     SetEntityHeading(entity, coords4.w)
 
     SpawnedProps[locationKey] = entity
+    SpawningProps[locationKey] = nil
     return entity
+end
+
+local function GetMenuSystem()
+    if Config.Menu == 'ox' then
+        return 'ox'
+    end
+
+    return 'qb'
+end
+
+local function PromptCraftAmount(data)
+    if type(data) ~= 'table' or type(data.locationKey) ~= 'string' or type(data.recipeKey) ~= 'string' then
+        return
+    end
+
+    local amount
+    local menuSystem = GetMenuSystem()
+
+    if menuSystem == 'ox' then
+        if GetResourceState('ox_lib') ~= 'started' then
+            QBCore.Functions.Notify('ox_lib is not started.', 'error')
+            return
+        end
+
+        local input = exports.ox_lib:inputDialog('Craft Amount', {
+            {
+                type = 'number',
+                label = ('Amount (1-%d)'):format(Config.MaxCraftAmount),
+                required = true,
+                min = 1,
+                max = Config.MaxCraftAmount,
+                default = 1
+            }
+        })
+
+        if not input or not input[1] then
+            return
+        end
+
+        amount = tonumber(input[1])
+    else
+        if GetResourceState('qb-input') ~= 'started' then
+            QBCore.Functions.Notify('qb-input is not started.', 'error')
+            return
+        end
+
+        local dialog = exports['qb-input']:ShowInput({
+            header = 'Craft Amount',
+            submitText = 'Craft',
+            inputs = {
+                {
+                    text = 'Amount (1-' .. Config.MaxCraftAmount .. ')',
+                    name = 'amount',
+                    type = 'number',
+                    isRequired = true
+                }
+            }
+        })
+
+        if not dialog or not dialog.amount then
+            return
+        end
+
+        amount = tonumber(dialog.amount)
+    end
+
+    if not amount then
+        QBCore.Functions.Notify('Invalid amount.', 'error')
+        return
+    end
+
+    TriggerServerEvent('sg_crafting:server:TryCraft', data.locationKey, data.recipeKey, amount)
 end
 
 local function OpenCraftMenu(locationKey)
@@ -280,37 +433,77 @@ local function OpenCraftMenu(locationKey)
         return
     end
 
-    local menu = {
-        {
-            header = locationData.label,
-            isMenuHeader = true
-        }
-    }
-
+    local menuSystem = GetMenuSystem()
     local cache = BuildRecipeCache()
-    for _, recipeKey in ipairs(GetLocationRecipeIds(locationData)) do
-        local recipe = cache.recipesById[recipeKey]
-        if recipe then
-            menu[#menu + 1] = {
-                header = recipe.label,
-                txt = ('Needs: %s | Time: %.1fs'):format(BuildRequirementsText(recipe), recipe.duration / 1000),
-                params = {
-                    event = 'sg_crafting:client:ChooseAmount',
-                    args = {
-                        locationKey = locationKey,
-                        recipeKey = recipeKey
+    local recipeIds = GetLocationRecipeIds(locationData)
+
+    if menuSystem == 'ox' then
+        if GetResourceState('ox_lib') ~= 'started' then
+            QBCore.Functions.Notify('ox_lib is not started.', 'error')
+            return
+        end
+
+        local options = {}
+        for _, recipeKey in ipairs(recipeIds) do
+            local recipe = cache.recipesById[recipeKey]
+            if recipe then
+                local selectedRecipeKey = recipeKey
+                options[#options + 1] = {
+                    title = recipe.label,
+                    description = ('Needs: %s | Time: %.1fs'):format(BuildRequirementsText(recipe), recipe.duration / 1000),
+                    onSelect = function()
+                        PromptCraftAmount({
+                            locationKey = locationKey,
+                            recipeKey = selectedRecipeKey
+                        })
+                    end
+                }
+            end
+        end
+
+        exports.ox_lib:registerContext({
+            id = ('sg_crafting_menu_%s'):format(locationKey),
+            title = locationData.label,
+            options = options
+        })
+        exports.ox_lib:showContext(('sg_crafting_menu_%s'):format(locationKey))
+    else
+        if GetResourceState('qb-menu') ~= 'started' then
+            QBCore.Functions.Notify('qb-menu is not started.', 'error')
+            return
+        end
+
+        local menu = {
+            {
+                header = locationData.label,
+                isMenuHeader = true
+            }
+        }
+
+        for _, recipeKey in ipairs(recipeIds) do
+            local recipe = cache.recipesById[recipeKey]
+            if recipe then
+                menu[#menu + 1] = {
+                    header = recipe.label,
+                    txt = ('Needs: %s | Time: %.1fs'):format(BuildRequirementsText(recipe), recipe.duration / 1000),
+                    params = {
+                        event = 'sg_crafting:client:ChooseAmount',
+                        args = {
+                            locationKey = locationKey,
+                            recipeKey = recipeKey
+                        }
                     }
                 }
-            }
+            end
         end
+
+        menu[#menu + 1] = {
+            header = 'Close',
+            params = { event = 'qb-menu:closeMenu' }
+        }
+
+        exports['qb-menu']:openMenu(menu)
     end
-
-    menu[#menu + 1] = {
-        header = 'Close',
-        params = { event = 'qb-menu:closeMenu' }
-    }
-
-    exports['qb-menu']:openMenu(menu)
 end
 
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
@@ -321,38 +514,26 @@ RegisterNetEvent('QBCore:Client:OnJobUpdate', function(job)
     PlayerData.job = job
 end)
 
-RegisterNetEvent('sg_crafting:client:OpenMenuForLocation', function(locationKey)
+RegisterNetEvent('sg_crafting:client:OpenMenuForLocation', function(payload)
+    local locationKey = payload
+    if type(payload) == 'table' then
+        locationKey = payload.locationKey or payload.args
+    end
+
+    if type(locationKey) ~= 'string' then
+        return
+    end
+
     OpenCraftMenu(locationKey)
 end)
 
 RegisterNetEvent('sg_crafting:client:ChooseAmount', function(data)
-    local dialog = exports['qb-input']:ShowInput({
-        header = 'Craft Amount',
-        submitText = 'Craft',
-        inputs = {
-            {
-                text = 'Amount (1-' .. Config.MaxCraftAmount .. ')',
-                name = 'amount',
-                type = 'number',
-                isRequired = true
-            }
-        }
-    })
-
-    if not dialog or not dialog.amount then
-        return
-    end
-
-    local amount = tonumber(dialog.amount)
-    if not amount then
-        QBCore.Functions.Notify('Invalid amount.', 'error')
-        return
-    end
-
-    TriggerServerEvent('sg_crafting:server:TryCraft', data.locationKey, data.recipeKey, amount)
+    PromptCraftAmount(data)
 end)
 
 RegisterNetEvent('sg_crafting:client:StartCraft', function(payload)
+    StartCraftingAnim()
+
     QBCore.Functions.Progressbar(
         'sg_crafting_' .. payload.craftId,
         ('Crafting %s...'):format(payload.label),
@@ -369,9 +550,11 @@ RegisterNetEvent('sg_crafting:client:StartCraft', function(payload)
         {},
         {},
         function()
+            StopCraftingAnim()
             TriggerServerEvent('sg_crafting:server:CompleteCraft', payload.craftId)
         end,
         function()
+            StopCraftingAnim()
             TriggerServerEvent('sg_crafting:server:CancelCraft', payload.craftId)
         end
     )
@@ -429,8 +612,9 @@ CreateThread(function()
                         {
                             icon = Config.Target.icon,
                             label = Config.Target.label,
-                            event = 'sg_crafting:client:OpenMenuForLocation',
-                            args = locationKey,
+                            action = function()
+                                OpenCraftMenu(locationKey)
+                            end,
                             canInteract = function()
                                 return IsJobAllowed(locationData)
                             end
@@ -462,8 +646,9 @@ CreateThread(function()
                             {
                                 icon = Config.Target.icon,
                                 label = Config.Target.label,
-                                event = 'sg_crafting:client:OpenMenuForLocation',
-                                args = locationKey,
+                                action = function()
+                                    OpenCraftMenu(locationKey)
+                                end,
                                 canInteract = function()
                                     return IsJobAllowed(locationData)
                                 end
@@ -604,7 +789,11 @@ AddEventHandler('onResourceStop', function(resourceName)
 
     for locationKey, entity in pairs(SpawnedProps) do
         if DoesEntityExist(entity) then
+            SetEntityAsMissionEntity(entity, true, true)
             DeleteEntity(entity)
+            if DoesEntityExist(entity) then
+                DeleteObject(entity)
+            end
         end
         SpawnedProps[locationKey] = nil
     end

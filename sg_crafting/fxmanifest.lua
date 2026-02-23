@@ -22,7 +22,5 @@ server_scripts {
 }
 
 dependencies {
-    'qb-core',
-    'qb-menu',
-    'qb-input'
+    'qb-core'
 }

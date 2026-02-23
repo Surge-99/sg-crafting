@@ -4,8 +4,8 @@ Config.Locations = {
         coords = vec4(-347.07, -133.64, 39.01, 340.0),
         prop = {
             enabled = true,
-            model = 'prop_tool_bench02_ld',
-            coords = vec4(-347.07, -133.64, 38.01, 340.0)
+            model = 'xm3_prop_xm3_bench_04b',
+            coords = vec4(-255.03, -1304.39, 30.3, 176.45),
         },
         recipes = { 'Illegal', 'Utility' },
         jobs = false,
@@ -20,7 +20,7 @@ Config.Locations = {
     },
     mechanic_bench = {
         label = 'Mechanic Bench',
-        coords = vec3(-211.55, -1325.02, 30.89),
+        coords = vec3(-228.96, -1327.71, 30.89),
         prop = {
             enabled = false,
         },
